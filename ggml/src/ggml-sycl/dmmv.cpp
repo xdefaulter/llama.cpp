@@ -3,11 +3,11 @@
 #include "dequantize.hpp"
 #include "presets.hpp"
 
+#if __has_include(<sycl/ext/oneapi/bfloat16.hpp>)
+    #include <sycl/ext/oneapi/bfloat16.hpp>
+    #define GGML_SYCL_DMMV_HAS_BF16
+#endif
 #if defined(__INTEL_LLVM_COMPILER)
-    #if __has_include(<sycl/ext/oneapi/bfloat16.hpp>)
-        #include <sycl/ext/oneapi/bfloat16.hpp>
-        #define GGML_SYCL_DMMV_HAS_BF16
-    #endif
     #include <sycl/ext/intel/esimd.hpp>
     #include "esimd.hpp"
     #define GGML_SYCL_DMMV_HAS_ESIMD

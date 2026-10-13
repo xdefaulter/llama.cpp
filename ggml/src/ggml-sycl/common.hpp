@@ -30,7 +30,8 @@
 
 namespace syclexp = sycl::ext::oneapi::experimental;
 
-#if defined(__INTEL_LLVM_COMPILER) && __has_include(<sycl/ext/oneapi/bfloat16.hpp>)
+#if __has_include(<sycl/ext/oneapi/bfloat16.hpp>)
+// open-source DPC++ provides bfloat16.hpp without defining __INTEL_LLVM_COMPILER
     #include <sycl/ext/oneapi/bfloat16.hpp>
     #ifndef GGML_SYCL_HAS_BF16
         #define GGML_SYCL_HAS_BF16
