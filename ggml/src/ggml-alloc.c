@@ -1162,7 +1162,7 @@ static bool ggml_gallocr_realloc_trace(void) {
 // sizes sufficient)?
 static bool ggml_gallocr_graph_fits(
         ggml_gallocr_t galloc, struct ggml_cgraph * graph,
-        struct node_alloc * node_allocs, int n_nodes, int n_leafs, bool trace) {
+        struct node_alloc * node_allocs, int n_nodes, struct leaf_alloc * leaf_allocs, int n_leafs, bool trace) {
     if (n_nodes != graph->n_nodes) {
         if (trace) {
             GGML_LOG_INFO("[realloc] n_nodes %d -> %d\n", n_nodes, graph->n_nodes);
@@ -1206,11 +1206,23 @@ static bool ggml_gallocr_graph_fits(
         }
     }
 
+    // leafs that no node reads (e.g. inputs kept in the graph with ggml_build_forward_expand) are not checked above
+    for (int i = 0; i < graph->n_leafs; i++) {
+        struct ggml_tensor * leaf = graph->leafs[i];
+
+        if (!ggml_gallocr_node_needs_realloc(galloc, leaf, &leaf_allocs[i].leaf)) {
+            if (trace) {
+                GGML_LOG_INFO("[realloc] leaf %d %s grew past its slot: size_max=%zu\n", i, leaf->name, leaf_allocs[i].leaf.size_max);
+            }
+            return false;
+        }
+    }
+
     return true;
 }
 
 static bool ggml_gallocr_needs_realloc(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
-    return !ggml_gallocr_graph_fits(galloc, graph, galloc->node_allocs, galloc->n_nodes, galloc->n_leafs,
+    return !ggml_gallocr_graph_fits(galloc, graph, galloc->node_allocs, galloc->n_nodes, galloc->leaf_allocs, galloc->n_leafs,
             ggml_gallocr_realloc_trace());
 }
 
@@ -1333,7 +1345,7 @@ static bool ggml_gallocr_layout_restore(ggml_gallocr_t galloc, struct ggml_cgrap
         if (key_ids != 0 && lay->key_ids != key_ids) {
             continue;
         }
-        if (!ggml_gallocr_graph_fits(galloc, graph, lay->node_allocs, lay->n_nodes, lay->n_leafs, trace)) {
+        if (!ggml_gallocr_graph_fits(galloc, graph, lay->node_allocs, lay->n_nodes, lay->leaf_allocs, lay->n_leafs, trace)) {
             if (trace) {
                 GGML_LOG_INFO("[realloc] layout key=%016llx matched but graph does not fit\n",
                         (unsigned long long) key);
