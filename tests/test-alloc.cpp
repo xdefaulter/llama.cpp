@@ -642,6 +642,33 @@ static void test_reallocation() {
     }
 }
 
+// a leaf that no node reads must still trigger a reallocation when it grows
+static void test_reallocation_unread_leaf() {
+    dummy_backend    backend = dummy_backend_init(64, /*align*/ 4);
+    ggml_gallocr_ptr galloc  = ggml_gallocr_ptr(ggml_gallocr_new(&backend.buffer_type));
+    for (size_t unread_size : { 8, 32 }) {
+        auto [ctx, graph, ctx_ptr] = make_context();
+        ggml_tensor * x[4];
+        x[0] = make_input_with_size(ctx, unread_size);
+        x[1] = make_input_with_size(ctx, 8);
+        x[2] = make_input_with_size(ctx, 8);
+        x[3] = ggml_add(ctx, x[1], x[2]);
+        assign_names(ctx);
+        ggml_set_output(x[3]);
+        ggml_build_forward_expand(graph, x[0]);
+        ggml_build_forward_expand(graph, x[3]);
+
+        bool result = ggml_gallocr_alloc_graph(galloc.get(), graph);
+        GGML_ASSERT(result);
+        check_all_allocated(graph);
+        check_max_size(ctx);
+        GGML_ASSERT(x[0]->buffer && x[0]->data);
+        for (int i = 1; i < 4; ++i) {
+            GGML_ASSERT(!memory_overlap(x[0], x[i]));
+        }
+    }
+}
+
 static void test_backend_graph_optimize(ggml_backend_t /*backend*/, ggml_cgraph * graph, ggml_backend_graph_optimize_params * params) {
     GGML_ASSERT(graph->n_nodes == 3);
     params->add_alloc_dep(params->user_data, graph->nodes[0], graph->nodes[2]);
@@ -1120,6 +1147,7 @@ int main() {
     run("test_multiple_buffer_types", test_multiple_buffer_types);
     run("test_buffer_size_zero", test_buffer_size_zero);
     run("test_reallocation", test_reallocation);
+    run("test_reallocation_unread_leaf", test_reallocation_unread_leaf);
     run("test_graph_optimize_alloc_dep", test_graph_optimize_alloc_dep);
     run("test_buft_alloc_buffer_n_single_buffer", test_buft_alloc_buffer_n_single_buffer);
     run("test_buft_alloc_buffer_n_multi_buffer", test_buft_alloc_buffer_n_multi_buffer);
