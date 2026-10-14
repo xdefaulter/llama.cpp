@@ -11710,6 +11710,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_flash_attn_ext(576, 512, 1, {32, 1}, 65536, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, true,   512));
     test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {12, 2},  4096, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false,  256));
 
+    // sparse attention with 12 query heads per KV head (Qwen QSA: 2051 cells per query), larger batches and q8_0
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {12, 1}, 16384, 256, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 2051));
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {12, 1}, 32768, 100, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 2051));
+    test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {12, 1}, 16384, 64, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0, {0, 1, 2, 3}, true, false, 2051));
+
     // GCN sparse attention with independent masks for multiple query tokens.
     for (int64_t nq : {2, 4, 8, 9, 16}) {
         test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {12, 1}, 16384, nq, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 2048));
@@ -11960,6 +11965,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 // Test cases for performance evaluation: should be representative of real-world use cases
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
+
+    // sparse prefill attention with 12 query heads per KV head (Qwen QSA): a 2048-token ubatch over 32K and 128K caches
+    for (int kv : { 32768, 131072 }) {
+        test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {12, 1}, kv, 2048, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 1, 2, 3}, true, false, 2051));
+    }
 
     // SWIGLU at a 27B-class FFN width, fused [gate|up] vs split operands
     // note: same bytes either way, so a backend that indexes them differently shows it here

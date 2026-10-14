@@ -215,6 +215,7 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_am
     GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256,  2, 256, 2, 128,  64)
     GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256,  4, 256, 2,  64, 128)
     GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256,  8, 256, 2,  64, 128)
+    GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 12, 128, 4,  32, 128) // sparse, 1 query x 12 heads
     GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 16, 256, 2,  32, 128)
     GGML_CUDA_FATTN_TILE_CONFIG_CASE(256, 256, 32, 256, 2,  32, 128)
 
@@ -650,10 +651,12 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     // KQ_cs == KQ chunk size, number of KQ values in j direction to store as one contiguous chunk in memory.
     // KQ is originally 2D but uses a Z-shaped 3D memory pattern like KQ[ncols/KQ_cs][DVp][KQ_cs].
 #ifdef FAST_FP16_AVAILABLE
-    constexpr int KQ_cs = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
+    constexpr int KQ_cs_max = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
 #else
-    constexpr int KQ_cs = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
+    constexpr int KQ_cs_max = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
 #endif // FAST_FP16_AVAILABLE
+    // a power of 2 that divides cpw (12-head tiles have 3 columns per warp)
+    constexpr int KQ_cs = KQ_cs_max >= 8 && cpw % 8 == 0 ? 8 : KQ_cs_max >= 4 && cpw % 4 == 0 ? 4 : KQ_cs_max >= 2 && cpw % 2 == 0 ? 2 : 1;
     static_assert(cpw % KQ_cs == 0, "bad KQ_cs");
     const int k_VKQ_sup = k_VKQ_max - k_VKQ_0; // k supremum, only smaller k values have valid KV data
 
@@ -1329,6 +1332,22 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     const bool nvidia = GGML_CUDA_CC_IS_NVIDIA(ggml_cuda_info().devices[ggml_cuda_get_device()].cc);
     const int gqa_limit = nvidia && gqa_ratio <= 4 && DV <= 256 ? 16 : INT_MAX;
     const bool use_gqa_opt = mask && max_bias == 0.0f && Q->ne[1] <= gqa_limit && K->ne[1] % FATTN_KQ_STRIDE == 0;
+
+#ifdef GGML_USE_HIP
+    // sparse with 12 query heads per KV head (Qwen QSA): one tile per query covers all 12 heads, so its K/V cells
+    // are loaded once instead of once per group of 4 heads
+    if constexpr (DKQ == 256 && DV == 256 && !use_logit_softcap) {
+        const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+        if (use_gqa_opt && gqa_ratio % 12 == 0 && ggml_cuda_fattn_tile_use_sparse(dst, cc, DKQ, DV)) {
+            constexpr int warp_size = 32;
+            const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, 12, cc) / warp_size;
+            const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, 12, cc);
+            launch_fattn<DV, 1, 12>(ctx, dst, flash_attn_tile<DKQ, DV, 1, 12, use_logit_softcap, true>,
+                nwarps, 0, nbatch_fa, true, true, false, true, warp_size);
+            return;
+        }
+    }
+#endif // GGML_USE_HIP
 
     if constexpr (DKQ == 320) {
         // This branch is only used for Mistral Small 4 which has a GQA ratio of 32.
